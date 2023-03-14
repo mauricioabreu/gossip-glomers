@@ -1,4 +1,4 @@
-module echo
+module github.com/mauricioabreu/gossip-glomers
 
 go 1.20
 
