@@ -20,12 +20,12 @@ func main() {
 	neighbors := make([]string, 0)
 	n := maelstrom.NewNode()
 	n.Handle("broadcast", func(msg maelstrom.Message) error {
-		var body map[string]any
+		var body reqBroadcastBody
 		if err := json.Unmarshal(msg.Body, &body); err != nil {
 			return err
 		}
 
-		messages = append(messages, body["message"].(float64))
+		messages = append(messages, body.Message)
 
 		for _, neighbor := range neighbors {
 			if neighbor != msg.Src {
