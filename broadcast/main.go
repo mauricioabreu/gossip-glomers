@@ -47,6 +47,8 @@ func main() {
 		return n.Reply(msg, map[string]string{"type": "broadcast_ok"})
 	})
 	n.Handle("read", func(msg maelstrom.Message) error {
+		mutex.RLock()
+		defer mutex.RUnlock()
 		replyMsgs := make([]float64, 0)
 		for m := range messages {
 			replyMsgs = append(replyMsgs, m)
@@ -55,6 +57,9 @@ func main() {
 		return n.Reply(msg, map[string]any{"type": "read_ok", "messages": replyMsgs})
 	})
 	n.Handle("topology", func(msg maelstrom.Message) error {
+		mutex.Lock()
+		defer mutex.Unlock()
+
 		var body reqTopologyBody
 		if err := json.Unmarshal(msg.Body, &body); err != nil {
 			return err
@@ -71,7 +76,7 @@ func main() {
 }
 
 func doRPC(n *maelstrom.Node, dest string, message float64) {
-	retryAfter := 100 * time.Millisecond
+	retryAfter := 500 * time.Millisecond
 	alreadyReceived := false
 	body := map[string]any{"type": "broadcast", "message": message}
 	err := n.RPC(dest, body, func(msg maelstrom.Message) error {
