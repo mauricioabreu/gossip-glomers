@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"log"
+	"sync"
+	"time"
 
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 )
@@ -16,38 +18,41 @@ type reqBroadcastBody struct {
 }
 
 func main() {
-	messages := make([]float64, 0)
+	var mutex sync.RWMutex
+	messages := make(map[float64]bool)
 	neighbors := make([]string, 0)
+
 	n := maelstrom.NewNode()
 	n.Handle("broadcast", func(msg maelstrom.Message) error {
+		mutex.Lock()
+		defer mutex.Unlock()
+
 		var body reqBroadcastBody
 		if err := json.Unmarshal(msg.Body, &body); err != nil {
 			return err
 		}
 
-		messages = append(messages, body.Message)
+		if messages[body.Message] {
+			return nil
+		} else {
+			messages[body.Message] = true
+		}
 
 		for _, neighbor := range neighbors {
 			if neighbor != msg.Src {
-				for _, message := range messages {
-					gBody := map[string]any{"type": "broadcast", "message": message}
-					n.RPC(neighbor, gBody, func(gmsg maelstrom.Message) error { return nil })
-				}
+				go doRPC(n, neighbor, body.Message)
 			}
 		}
 
 		return n.Reply(msg, map[string]string{"type": "broadcast_ok"})
 	})
 	n.Handle("read", func(msg maelstrom.Message) error {
-		var body map[string]any
-		if err := json.Unmarshal(msg.Body, &body); err != nil {
-			return err
+		replyMsgs := make([]float64, 0)
+		for m := range messages {
+			replyMsgs = append(replyMsgs, m)
 		}
 
-		body["type"] = "read_ok"
-		body["messages"] = messages
-
-		return n.Reply(msg, body)
+		return n.Reply(msg, map[string]any{"type": "read_ok", "messages": replyMsgs})
 	})
 	n.Handle("topology", func(msg maelstrom.Message) error {
 		var body reqTopologyBody
@@ -55,8 +60,6 @@ func main() {
 			return err
 		}
 
-		response := make(map[string]string)
-		response["type"] = "topology_ok"
 		neighbors = body.Topology[n.ID()]
 
 		return n.Reply(msg, map[string]string{"type": "topology_ok"})
@@ -64,5 +67,28 @@ func main() {
 
 	if err := n.Run(); err != nil {
 		log.Fatal(err)
+	}
+}
+
+func doRPC(n *maelstrom.Node, dest string, message float64) {
+	retryAfter := 100 * time.Millisecond
+	alreadyReceived := false
+	body := map[string]any{"type": "broadcast", "message": message}
+	err := n.RPC(dest, body, func(msg maelstrom.Message) error {
+		var body map[string]any
+		if err := json.Unmarshal(msg.Body, &body); err != nil {
+			return err
+		}
+
+		if body["type"] == "broadcast_ok" {
+			alreadyReceived = true
+		}
+
+		return nil
+	})
+
+	time.Sleep(retryAfter)
+	if !alreadyReceived || err != nil {
+		doRPC(n, dest, message)
 	}
 }
